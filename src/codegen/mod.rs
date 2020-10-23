@@ -1005,6 +1005,44 @@ impl<'a> CodeGenerator for Vtable<'a> {
     ) {
         assert_eq!(item.id(), self.item_id);
         debug_assert!(item.is_enabled_for_codegen(ctx));
+        let item_name = ctx.rust_ident(&item.canonical_name(ctx));
+        let mut item_canonical_name = item.canonical_name(ctx);
+
+        let mut methods = vec![];
+        for m in self.methods {
+            if !m.is_virtual() {
+                continue;
+            }
+            let method_name = ctx.resolve_func(m.signature()).name();
+            // println!("method = {} is_virtual={}", method_name, m.is_virtual());
+
+            let function_item = ctx.resolve_item(m.signature());
+            let function = function_item.expect_function();
+            let mut name = match m.kind() {
+                MethodKind::Constructor => "new".into(),
+                MethodKind::Destructor => "destruct".into(),
+                _ => function.name().to_owned(),
+            };
+            let signature_item = ctx.resolve_item(function.signature());
+            let signature = match *signature_item.expect_type().kind() {
+                TypeKind::Function(ref sig) => sig,
+                _ => panic!("How in the world?"),
+            };
+            let name = ctx.rust_ident(&name);
+            let mut args = utils::fnsig_arguments(ctx, signature);
+            let mut ret = utils::fnsig_return_ty(ctx, signature);
+            methods.push(quote! {
+                pub #name: extern "C" fn(#( #args ),*) #ret,
+            });
+            // pub #name: extern "C" fn(_this: *mut #item_name, #( #args ),*) #ret,
+            //pub x: fn #name ( #( #args ),* ) #ret
+        }
+
+        // println!(
+        //     "println VTable ::codegen: item.name={} canonical_name={} methods={:?} ",
+        //     item_name, item_canonical_name, methods
+        // );
+        // panic!("VTable panic");
 
         // For now, generate an empty struct, later we should generate function
         // pointers and whatnot.
@@ -1012,7 +1050,9 @@ impl<'a> CodeGenerator for Vtable<'a> {
         let void = helpers::ast_ty::c_void(ctx);
         result.push(quote! {
             #[repr(C)]
-            pub struct #name ( #void );
+            pub struct #name {
+                #( #methods )*
+            }
         });
     }
 }
